@@ -1,0 +1,44 @@
+name: Build Mysterium APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get source code
+        run: |
+          git clone https://github.com/mysteriumnetwork/mysterium-vpn-mobile.git src
+          cd src
+          git checkout 9c16fc0243121a506c1d54e095dfc54f8c2645ea
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Patch build files (same as F-Droid)
+        working-directory: src/android/app
+        run: |
+          sed -i -e '/splits {/,+7d' -e '/intercom/d' -e '/dependencies {/a implementation "com.google.code.gson:gson:2.8.6"\nimplementation "com.squareup.retrofit2:retrofit:2.9.0"\nimplementation "com.squareup.retrofit2:converter-gson:2.9.0"' build.gradle
+          sed -i -e '/foojay/d' ../settings.gradle
+
+      - name: Build
+        working-directory: src/android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleCryptoRelease --no-daemon
+
+      - name: Sign with a throwaway key
+        run: |
+          APK=$(find src -name "app-crypto-release-unsigned.apk" | head -1)
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          keytool -genkeypair -keystore ks.jks -alias key -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Test"
+          $BT/zipalign -p -f 4 "$APK" aligned.apk
+          $BT/apksigner sign --ks ks.jks --ks-pass pass:android --out mysterium.apk aligned.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mysterium-apk
+          path: mysterium.apk
